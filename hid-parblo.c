@@ -7,6 +7,8 @@
 #include <linux/usb.h>
 #include <linux/usb/input.h>
 
+#include <uapi/linux/input-event-codes.h>
+
 #define NAME "ParbloCoast10\0"
 #define NAME_LEN 15
 
@@ -21,6 +23,10 @@
 
 static const int hw_absevents[] = {
   ABS_X, ABS_Y, ABS_PRESSURE,
+};
+
+static const int hw_buttons[] = {
+  BTN_TOOL_PEN, BTN_STYLUS
 };
 
 static const struct usb_device_id parblo_devices[] = {
@@ -44,15 +50,37 @@ static void parblo_irq(struct urb *urb)
 {
   struct parblo *parblo = urb->context;
   struct usb_device *dev = parblo->usbdev;
+  struct input_dev* input_device = parblo->dev;
   int retval, x, y, p, c;
 
   switch (urb->status) {
   case 0:
     c = parblo->data[1];
-    x = (parblo->data[2] << 8) + parblo->data[3];
-    y = (parblo->data[4] << 8) + parblo->data[5];
-    p = (parblo->data[6] << 8) + parblo->data[7];
-    printk("C: %d X: %d Y: %d P: %d\n", c, x, y, p);
+
+    // c = 128 (no tool)
+    // c = 160 (hovering)
+
+    // check if the pen is in the field
+    if (c >= 160) {
+      input_report_key(input_device, BTN_TOOL_PEN, ((c & 0x1) > 0));
+      input_report_key(input_device, BTN_STYLUS, ((c & 0x4) > 0));
+
+      /* calculate the stuff */
+      x = (parblo->data[2] << 8) + parblo->data[3];
+      y = (parblo->data[4] << 8) + parblo->data[5];
+      p = (parblo->data[6] << 8) + parblo->data[7];
+
+      /* report the stuff */
+      input_report_abs(input_device, ABS_X, x);
+      input_report_abs(input_device, ABS_Y, y);
+      input_report_abs(input_device, ABS_PRESSURE, p);
+    } else {
+      input_report_key(input_device, BTN_TOOL_PEN, 0);
+      input_report_key(input_device, BTN_STYLUS, 0);
+      input_report_abs(input_device, ABS_PRESSURE, 0);
+    }
+
+    //printk("C: %d X: %d Y: %d P: %d\n", c, x, y, p);
 
     input_sync(parblo->dev);
     break;
@@ -78,20 +106,20 @@ static void parblo_irq(struct urb *urb)
 static int parblo_open(struct input_dev *dev)
 {
   struct parblo *parblo = input_get_drvdata(dev);
-  printk(KERN_ALERT "opened the door!\n");
+  //printk(KERN_ALERT "opened the door!\n");
 
   parblo->irq->dev = parblo->usbdev;
   if (usb_submit_urb(parblo->irq, GFP_KERNEL))
     return -EIO;
 
-  printk(KERN_ALERT "wabbajack!\n");
+  //printk(KERN_ALERT "wabbajack!\n");
   return 0;
 }
 
 static void parblo_close(struct input_dev *dev)
 {
   struct parblo *parblo = input_get_drvdata(dev);
-  printk(KERN_ALERT "closed the door!\n");
+  //printk(KERN_ALERT "closed the door!\n");
 
   usb_kill_urb(parblo->irq);
 }
@@ -103,7 +131,7 @@ static int parblo_probe(struct usb_interface *dev, const struct usb_device_id *i
   struct usb_device *devx = interface_to_usbdev(dev);
   struct input_dev* input_dev;
   int error, i;
-  printk(KERN_ALERT "klop!\n");
+  //printk(KERN_ALERT "klop!\n");
 
   parblo = kzalloc(sizeof(struct parblo), GFP_KERNEL);
   input_dev = input_allocate_device();
@@ -145,12 +173,15 @@ static int parblo_probe(struct usb_interface *dev, const struct usb_device_id *i
   for (i = 0; i < ARRAY_SIZE(hw_absevents); ++i)
     __set_bit(hw_absevents[i], input_dev->absbit);
 
+  for (i = 0; i < ARRAY_SIZE(hw_buttons); ++i)
+    __set_bit(hw_buttons[i], input_dev->keybit);
+
   input_set_abs_params(input_dev, ABS_X,
 		       0, 10206, 4, 0);
   input_set_abs_params(input_dev, ABS_Y,
 		       0, 7422, 4, 0);
   input_set_abs_params(input_dev, ABS_PRESSURE,
-		       32, 65504, 4, 0);
+		       0, 65504, 4, 0);
 
   usb_fill_int_urb(parblo->irq, devx,
 		   usb_rcvintpipe(devx, endpoint->bEndpointAddress),
@@ -187,7 +218,7 @@ static void parblo_disconnect(struct usb_interface *dev)
   kfree(parblo);
   usb_set_intfdata(dev, NULL);
 
-  printk(KERN_ALERT "no more salt\n");
+  //printk(KERN_ALERT "no more salt\n");
 }
 
 static struct usb_driver parblo_driver = {
