@@ -1,4 +1,4 @@
-obj-m := hid-parblo.o
+obj-m := parblo-coast10.o
 KVERSION := $(shell uname -r)
 KDIR := /lib/modules/$(KVERSION)/build
 
