@@ -26,7 +26,7 @@ static const int hw_absevents[] = {
 };
 
 static const int hw_buttons[] = {
-  BTN_TOOL_PEN, BTN_STYLUS
+  BTN_TOOL_PEN, BTN_LEFT, BTN_STYLUS
 };
 
 static const struct usb_device_id parblo_devices[] = {
@@ -62,21 +62,28 @@ static void parblo_irq(struct urb *urb)
 
     // check if the pen is in the field
     if (c >= 160) {
-      input_report_key(input_device, BTN_TOOL_PEN, ((c & 0x1) > 0));
+      input_report_key(input_device, BTN_TOOL_PEN, 1);
+      input_report_key(input_device, BTN_LEFT, ((c & 0x1) > 0));
       input_report_key(input_device, BTN_STYLUS, ((c & 0x4) > 0));
 
       /* calculate the stuff */
       x = (parblo->data[2] << 8) + parblo->data[3];
       y = (parblo->data[4] << 8) + parblo->data[5];
-      p = (parblo->data[6] << 8) + parblo->data[7];
 
       /* report the stuff */
       input_report_abs(input_device, ABS_X, x);
       input_report_abs(input_device, ABS_Y, y);
-      input_report_abs(input_device, ABS_PRESSURE, p);
+
+      if (c > 160) {
+	p = (parblo->data[6] << 8) + parblo->data[7];
+	input_report_abs(input_device, ABS_PRESSURE, p);
+      } else {
+	input_report_abs(input_device, ABS_PRESSURE, p);
+      }
     } else {
       input_report_key(input_device, BTN_TOOL_PEN, 0);
-      input_report_key(input_device, BTN_STYLUS, 0);
+      input_report_key(input_device, BTN_LEFT, ((c & 0x1) > 0));
+      input_report_key(input_device, BTN_STYLUS, ((c & 0x4) > 0));
       input_report_abs(input_device, ABS_PRESSURE, 0);
     }
 
@@ -170,6 +177,9 @@ static int parblo_probe(struct usb_interface *dev, const struct usb_device_id *i
   input_dev->open = parblo_open;
   input_dev->close = parblo_close;
 
+  __set_bit(EV_KEY, input_dev->evbit);
+  __set_bit(EV_ABS, input_dev->evbit);
+
   for (i = 0; i < ARRAY_SIZE(hw_absevents); ++i)
     __set_bit(hw_absevents[i], input_dev->absbit);
 
@@ -211,6 +221,8 @@ static void parblo_disconnect(struct usb_interface *dev)
 {
   struct parblo* parblo;
   parblo = usb_get_intfdata(dev);
+
+  input_unregister_device(parblo->dev);
 
   usb_free_coherent(interface_to_usbdev(dev),
 		    parblo->blen, parblo->data,
