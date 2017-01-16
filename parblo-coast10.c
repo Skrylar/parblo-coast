@@ -51,12 +51,16 @@
 /* XXX probably should check this from the packet descriptor, but meh */
 #define PACKET_LENGTH 128
 
+#define TOOL_NONE 0
+#define TOOL_PEN 1
+#define TOOL_ERASER 2
+
 static const int hw_absevents[] = {
-  ABS_X, ABS_Y, ABS_PRESSURE,
+  ABS_X, ABS_Y, ABS_PRESSURE
 };
 
 static const int hw_buttons[] = {
-  BTN_TOOL_PEN, BTN_LEFT, BTN_STYLUS
+  BTN_TOOL_PEN, BTN_LEFT, BTN_STYLUS, BTN_TOOL_RUBBER
 };
 
 static const struct usb_device_id parblo_devices[] = {
@@ -74,6 +78,11 @@ struct parblo {
   char name[32];
   char phys[32];
   int blen;
+
+  // cache X and Y positions of the pointer, needed so we don't throw the
+  // cursor around when changing tool modes
+  ushort x, y;
+  ushort tool;
 };
 
 static void parblo_irq(struct urb *urb)
@@ -81,7 +90,7 @@ static void parblo_irq(struct urb *urb)
   struct parblo *parblo = urb->context;
   struct usb_device *dev = parblo->usbdev;
   struct input_dev* input_device = parblo->dev;
-  int retval, x, y, p, c;
+  int retval, p, c;
 
   switch (urb->status) {
   case 0:
@@ -89,32 +98,60 @@ static void parblo_irq(struct urb *urb)
 
     // c = 128 (no tool)
     // c = 160 (hovering)
+    // c = 194 (set tool number)
 
-    // check if the pen is in the field
-    if (c >= 160) {
-      input_report_key(input_device, BTN_TOOL_PEN, 1);
+    if (c == 194) {
+      int toolcode = (parblo->data[2] << 8) + parblo->data[3];
+      if (toolcode == 32) {
+	parblo->tool = TOOL_PEN;
+	input_report_key(input_device, BTN_TOOL_PEN, 1);
+	input_report_key(input_device, BTN_TOOL_RUBBER, 0);
+      } else {
+	parblo->tool = TOOL_ERASER;
+	input_report_key(input_device, BTN_TOOL_PEN, 0);
+	input_report_key(input_device, BTN_TOOL_RUBBER, 1);
+      }
+      //input_event(input_device, EV_MSC, MSC_SERIAL, 0xffffffff);
+    } // check if the pen is in the field
+    else if (c >= 160 && c <= 165) {
+      if (parblo->tool == TOOL_PEN) {
+	input_report_key(input_device, BTN_TOOL_PEN, 1);
+	input_report_key(input_device, BTN_TOOL_RUBBER, 0);
+      } else {
+	input_report_key(input_device, BTN_TOOL_PEN, 0);
+	input_report_key(input_device, BTN_TOOL_RUBBER, 1);
+      }
+
       input_report_key(input_device, BTN_LEFT, ((c & 0x1) > 0));
       input_report_key(input_device, BTN_STYLUS, ((c & 0x4) > 0));
 
       /* calculate the stuff */
-      x = (parblo->data[2] << 8) + parblo->data[3];
-      y = (parblo->data[4] << 8) + parblo->data[5];
+      parblo->x = (parblo->data[2] << 8) + parblo->data[3];
+      parblo->y = (parblo->data[4] << 8) + parblo->data[5];
 
       /* report the stuff */
-      input_report_abs(input_device, ABS_X, x);
-      input_report_abs(input_device, ABS_Y, y);
+      input_report_abs(input_device, ABS_X, parblo->x);
+      input_report_abs(input_device, ABS_Y, parblo->y);
 
       if (c > 160) {
 	p = (parblo->data[6] << 8) + parblo->data[7];
 	input_report_abs(input_device, ABS_PRESSURE, p);
       } else {
-	input_report_abs(input_device, ABS_PRESSURE, p);
+	input_report_abs(input_device, ABS_PRESSURE, 0);
       }
+
+      //input_report_abs(input_device, ABS_MISC, parblo->tool);
+      //input_event(input_device, EV_MSC, MSC_SERIAL, 0xffffffff);
     } else {
       input_report_key(input_device, BTN_TOOL_PEN, 0);
-      input_report_key(input_device, BTN_LEFT, ((c & 0x1) > 0));
-      input_report_key(input_device, BTN_STYLUS, ((c & 0x4) > 0));
+      input_report_key(input_device, BTN_TOOL_RUBBER, 0);
+      input_report_key(input_device, BTN_LEFT, 0);
+      input_report_key(input_device, BTN_STYLUS, 0);
+      input_report_abs(input_device, ABS_X, parblo->x);
+      input_report_abs(input_device, ABS_Y, parblo->y);
       input_report_abs(input_device, ABS_PRESSURE, 0);
+      //input_report_abs(input_device, ABS_MISC, 0);
+      //input_event(input_device, EV_MSC, MSC_SERIAL, 0xffffffff);
     }
 
     //printk("C: %d X: %d Y: %d P: %d\n", c, x, y, p);
@@ -216,12 +253,14 @@ static int parblo_probe(struct usb_interface *dev, const struct usb_device_id *i
   for (i = 0; i < ARRAY_SIZE(hw_buttons); ++i)
     __set_bit(hw_buttons[i], input_dev->keybit);
 
+  __set_bit(MSC_SERIAL, input_dev->mscbit);
+
   input_set_abs_params(input_dev, ABS_X,
 		       0, 10206, 4, 0);
   input_set_abs_params(input_dev, ABS_Y,
 		       0, 7422, 4, 0);
   input_set_abs_params(input_dev, ABS_PRESSURE,
-		       0, 65504, 4, 0);
+		       0, 65504, 0, 0);
 
   usb_fill_int_urb(parblo->irq, devx,
 		   usb_rcvintpipe(devx, endpoint->bEndpointAddress),
