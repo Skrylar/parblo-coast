@@ -44,7 +44,7 @@ lines:
 
 ```
 Section "InputClass"
-	Identifier "Parblo Coast 10"
+	Identifier "ParbloCoast10"
 	MatchUSBID "0b57:8534"
 	MatchDevicePath "/dev/input/event*"
 	Driver "wacom"
